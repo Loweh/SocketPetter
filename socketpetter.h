@@ -6,6 +6,15 @@
 
 #pragma comment(lib, "ws2_32.lib")
 
+/* HEY REMEMBER THESE THINGS
+-MAKE A SPECIAL CASE IN SERVERRECVPACKET AND CLIENTRECVPACKET TO RECOGNISE PINGS
+-MAKE THE VARIABLES NECESSARY FOR CLIENTSOCK AND SERVERSOCK TO SUPPORT PINGS
+-CHANGE THE TYPE SECTION OF THE PROTOCOL TO AN 8-BIT VALUE
+-REMOVE THE ID SYSTEM ENTIRELY
+-MAKE ALL THE NECESSARY CHANGES TO SUPPORT THOSE PROTOCOL CHANGES
+-MAYBE LOOK INTO HAVING SERVERRECVPACKET RECV FOR EACH CLIENT SO YOU DON'T HAVE TO DO IT IN YOUR PROGRAM
+*/
+
 //CONSTANTS
 const int PORT = 2127;
 const char *IP = "127.0.0.1";
@@ -55,13 +64,16 @@ int CREATECLIENTSOCK(CLIENTSOCK *csock) {
 	strncpy(csock->id, buffer, IDSIZE);
 
 	csock->lastvalue = ioctlsocket(csock->socket, FIONBIO, (u_long *) &NONBLOCKING);
+	if (csock->lastvalue == SOCKET_ERROR) {
+		return 5;
+	};
 
 	csock->alive = 1;
 
 	return 0;
 };
 
-int SENDCLIENTPACKET(CLIENTSOCK *csock, char type, char *data) {
+int CLIENTSENDPACKET(CLIENTSOCK *csock, char type, char *data) {
 	char buffer[PACKETSIZE];
 	buffer[0] = type;
 
@@ -69,19 +81,19 @@ int SENDCLIENTPACKET(CLIENTSOCK *csock, char type, char *data) {
 	strncpy(buffer + (1 + IDSIZE), data, DATASIZE);
 
 	int result = send(csock->socket, buffer, PACKETSIZE, 0);
-	if (result <= 0) {
+	if (result == SOCKET_ERROR) {
 		return 1;
 	};
 
 	return 0;
 };
 
-int RECVCLIENTPACKET(CLIENTSOCK *csock, char *type, char *data) {
+int CLIENTRECVPACKET(CLIENTSOCK *csock, char *type, char *data) {
 	char buffer[PACKETSIZE];
 	char id[IDSIZE];
 
 	int result = recv(csock->socket, buffer, PACKETSIZE, 0);
-	if (result <= 0) {
+	if (result == 0 || result == SOCKET_ERROR) {
 		return 1;
 	};
 
@@ -99,5 +111,99 @@ int RECVCLIENTPACKET(CLIENTSOCK *csock, char *type, char *data) {
 
 void REMOVECLIENTSOCK(CLIENTSOCK *csock) {
 	closesocket(csock->socket);
+	WSACleanup();
+};
+
+//SERVER
+typedef struct SERVERSOCK SERVERSOCK;
+
+struct SERVERSOCK {
+	WSADATA wsa;
+	SOCKET socket;
+	struct sockaddr_in server;
+	SOCKET clientlist[10]; //will probably change this later to a shadow array or something
+	int clients = 0;
+	int alive = 0;
+	int lastvalue = 0;
+};
+
+int CREATESERVERSOCK(SERVERSOCK *ssock) {
+	ssock->lastvalue = WSAStartup(MAKEWORD(2, 2), &ssock->wsa);
+	if (ssock->lastvalue != 0) {
+		return 1;
+	};
+
+	ssock->socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	if (ssock->socket == INVALID_SOCKET) {
+		return 2;
+	};
+
+	ssock->lastvalue = ioctlsocket(ssock->socket, FIONBIO, (u_long *) &NONBLOCKING);
+	if (ssock->lastvalue == SOCKET_ERROR) {
+		return 3;
+	};
+
+	ssock->server.sin_addr.s_addr = INADDR_ANY;
+	ssock->server.sin_port = htons(PORT);
+	ssock->server.sin_family = AF_INET;
+
+	ssock->lastvalue = bind(ssock->socket, (struct sockaddr *) &ssock->server, sizeof(ssock->server));
+	if (ssock->lastvalue == SOCKET_ERROR) {
+		return 4;
+	};
+
+	ssock->alive = 1;
+
+	return 0;
+};
+
+void ACCEPTCLIENTSOCK(SERVERSOCK *ssock) {
+	listen(ssock->socket, 3);
+
+	int serversize = sizeof(ssock->server);
+	SOCKET tempsock = accept(ssock->socket, (struct sockaddr *) &ssock->server, &serversize);
+
+	if (tempsock != INVALID_SOCKET) {
+		ssock->clientlist[ssock->clients] = tempsock;
+
+		send(tempsock, "ab", IDSIZE, 0);
+		
+		ssock->clients++;
+	};
+};
+
+int SERVERSENDPACKET(SERVERSOCK *ssock, int clientnum, char type, char *data) {
+	char buffer[PACKETSIZE];
+	buffer[0] = type;
+	buffer[1] = 'a'; //i can cut this and the line below it later
+	buffer[2] = 'b';
+
+	strncpy(buffer + (1 + IDSIZE), data, DATASIZE);
+
+	int result = send(ssock->clientlist[clientnum], buffer, PACKETSIZE, 0);
+	if (result == SOCKET_ERROR) {
+		return 1;
+	}
+
+	return 0;
+};
+
+int SERVERRECVPACKET(SERVERSOCK *ssock, int clientnum, char *type, char *data) {
+	char buffer[PACKETSIZE];
+
+	int result = recv(ssock->clientlist[clientnum], buffer, PACKETSIZE, 0);
+	if (result == 0 || result == SOCKET_ERROR) {
+		return 1;
+	};
+
+	type[0] = buffer[0];
+
+	strncpy(data, buffer + (1 + IDSIZE), DATASIZE);
+
+	return 0;
+};
+
+void REMOVESERVERSOCK(SERVERSOCK *ssock) {
+	closesocket(ssock->socket);
 	WSACleanup();
 };
