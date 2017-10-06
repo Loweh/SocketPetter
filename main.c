@@ -3,7 +3,7 @@
 #include "socketpetter.h"
 
 int main() {
-	/* CLIENT TEST CODE
+	//CLIENT TEST CODE
 	CLIENTSOCK sock;
 	int error = 0;
 
@@ -13,23 +13,31 @@ int main() {
 		return error;
 	};
 
-	SENDCLIENTPACKET(&sock, '!', "snd nudes");
+	CLIENTSENDPACKET(&sock, 100, "snd nudes");
 
 	while (sock.alive) {
-		char b[DATASIZE];
-		char type = '\0';
+		time_t currenttime;
+		time(&currenttime);
 
-		error = RECVCLIENTPACKET(&sock, &type, b);
+		error = (int) difftime(currenttime, sock.lastping);
+		if (error > PINGTIMEOUT && sock.alive) {
+			sock.alive = 0;
+		} else {
+			char b[DATASIZE];
+			unsigned int type = 0;
 
-		if (!error) {
-			printf("%s\n", b);
+			error = CLIENTRECVPACKET(&sock, &type, b);
+
+			if (!error) {
+				printf("The server says... %s with type %i\n", b, type);
+			};
 		};
 	};
 
-	REMOVECLIENTSOCK(&sock); */
+	REMOVECLIENTSOCK(&sock);
 
 	// SERVER TEST CODE
-	SERVERSOCK sock;
+	/*SERVERSOCK sock;
 	int error = 0;
 	int a = 0;
 
@@ -42,29 +50,28 @@ int main() {
 	while (sock.alive) {
 		ACCEPTCLIENTSOCK(&sock);
 
-		char b[DATASIZE] = "";
-		char c[DATASIZE] = "";
-		char d[DATASIZE] = "";
-		char type = '\0';
-		char type2 = '\0';
-		char type3 = '\0';
+		char buffer[DATASIZE] = "";
+		unsigned int type = 0;
+		time_t currenttime;
+		time(&currenttime);
 
-		error = SERVERRECVPACKET(&sock, 0, &type, b);
-		if (!error) {
-			printf("0 says... %s\n", b);
-		};
+		for (int i = 0; i < sock.clients; i++) {
+			error = (int)difftime(currenttime, sock.clientlist[i].lastping);
+			if (error == 30 && !sock.clientlist[i].dead) {
+				sock.clientlist[i].dead = 1;
+				closesocket(sock.clientlist[i].sock);
 
-		error = SERVERRECVPACKET(&sock, 1, &type2, c);
-		if (!error) {
-			printf("1 says... %s\n", c);
-		};
-
-		error = SERVERRECVPACKET(&sock, 2, &type3, d);
-		if (!error) {
-			printf("2 says... %s\n", d);
+				printf("%i is dead\n", i);
+			} else {
+				error = SERVERRECVPACKET(&sock, i, &type, buffer);
+				if (!error) {
+					printf("%i says... %s with type %i\n", i, buffer, type);
+				};
+			};
 		};
 	};
 
-	REMOVESERVERSOCK(&sock);
+	REMOVESERVERSOCK(&sock);*/
+
 	return 0;
 };
