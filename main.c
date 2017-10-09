@@ -16,21 +16,14 @@ int main() {
 	CLIENTSENDPACKET(&sock, 100, "snd nudes");
 
 	while (sock.alive) {
-		time_t currenttime;
-		time(&currenttime);
+		char b[DATASIZE];
+		unsigned int type = 0;
 
-		error = (int) difftime(currenttime, sock.lastping);
-		if (error > PINGTIMEOUT && sock.alive) {
-			sock.alive = 0;
-		} else {
-			char b[DATASIZE];
-			unsigned int type = 0;
+		CLIENTHANDLEPING(&sock);
 
-			error = CLIENTRECVPACKET(&sock, &type, b);
-
-			if (!error) {
-				printf("The server says... %s with type %i\n", b, type);
-			};
+		error = CLIENTRECVPACKET(&sock, &type, b);
+		if (!error) {
+			printf("The server says... %s with type %i\n", b, type);
 		};
 	};
 
@@ -52,21 +45,13 @@ int main() {
 
 		char buffer[DATASIZE] = "";
 		unsigned int type = 0;
-		time_t currenttime;
-		time(&currenttime);
 
 		for (int i = 0; i < sock.clients; i++) {
-			error = (int)difftime(currenttime, sock.clientlist[i].lastping);
-			if (error == 30 && !sock.clientlist[i].dead) {
-				sock.clientlist[i].dead = 1;
-				closesocket(sock.clientlist[i].sock);
+			SERVERHANDLEPING(&sock, i);
 
-				printf("%i is dead\n", i);
-			} else {
-				error = SERVERRECVPACKET(&sock, i, &type, buffer);
-				if (!error) {
-					printf("%i says... %s with type %i\n", i, buffer, type);
-				};
+			error = SERVERRECVPACKET(&sock, i, &type, buffer);
+			if (!error) {
+				printf("%i says... %s with type %i\n", i, buffer, type);
 			};
 		};
 	};

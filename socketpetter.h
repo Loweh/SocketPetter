@@ -8,7 +8,9 @@
 #pragma comment(lib, "ws2_32.lib")
 
 /* HEY REMEMBER THESE THINGS
--MAKE PINGS NOT SO UGLY (PROBABLY BY MAKING FUNCTIONS FOR SENDING PINGS AND CHECKING FOR THEM GOING OVER THE TIMEOUT
+-MAKE THINGS A BIT MORE COHERENT AND NICE LOOKING, FIX STRUCTS AND NAMES
+-CONSIDER HIDING THE FOR LOOPS (SERVER-SIDE) IN THE FUNCTIONS THEMSELVES
+-AS A RESULT OF THE PREVIOUS POINT, CONSIDER FUSING HANDLEPING WITH RECV
 */
 
 //CONSTANTS
@@ -27,7 +29,8 @@ struct CLIENTSOCK {
 	WSADATA wsa;
 	SOCKET socket;
 	struct sockaddr_in server;
-	time_t lastping;
+	time_t lastpingrecv;
+	time_t lastpingsent;
 	int alive = 0;
 	int lastvalue = 0;
 };
@@ -60,7 +63,8 @@ int CREATECLIENTSOCK(CLIENTSOCK *csock) {
 	time_t currenttime;
 	time(&currenttime);
 
-	csock->lastping = currenttime;
+	csock->lastpingrecv = currenttime;
+	csock->lastpingsent = currenttime;
 
 	csock->alive = 1;
 
@@ -95,12 +99,33 @@ int CLIENTRECVPACKET(CLIENTSOCK *csock, unsigned int *type, char *data) {
 		time_t currenttime;
 		time(&currenttime);
 
-		csock->lastping = currenttime;
+		csock->lastpingrecv = currenttime;
 	};
 
 	strncpy(data, buffer + 1, DATASIZE);
 
 	return 0;
+};
+
+void CLIENTHANDLEPING(CLIENTSOCK *csock) {
+	int difference = 0;
+	time_t currenttime;
+
+	time(&currenttime);
+
+	difference = difftime(currenttime, csock->lastpingrecv);
+	if (difference == PINGTIMEOUT) {
+		csock->alive = 0;
+	};
+
+	difference = difftime(currenttime, csock->lastpingsent);
+	if (difference == (PINGTIMEOUT - 2)) { //magic number to give some time for the server to get the ping
+		char buffer[PACKETSIZE];
+		buffer[0] = (char) PINGTYPEVALUE;
+
+		send(csock->socket, buffer, PACKETSIZE, 0);
+		time(&csock->lastpingsent);
+	};
 };
 
 void REMOVECLIENTSOCK(CLIENTSOCK *csock) {
@@ -109,12 +134,13 @@ void REMOVECLIENTSOCK(CLIENTSOCK *csock) {
 };
 
 //SERVER
-typedef struct SERVERENDCLIENTSOCK SERVERENDCLIENTSOCK;
+typedef struct SERVERCLIENT SERVERCLIENT;
 
-struct SERVERENDCLIENTSOCK {
-	SOCKET sock;
-	time_t lastping;
-	int dead = 0;
+struct SERVERCLIENT {
+	SOCKET socket;
+	time_t lastpingrecv;
+	time_t lastpingsent;
+	int alive = 1;
 };
 
 typedef struct SERVERSOCK SERVERSOCK;
@@ -123,7 +149,7 @@ struct SERVERSOCK {
 	WSADATA wsa;
 	SOCKET socket;
 	struct sockaddr_in server;
-	SERVERENDCLIENTSOCK clientlist[10]; //will probably change this later to a shadow array or something
+	SERVERCLIENT clientlist[10]; //will probably change this later to a shadow array or something
 	int clients = 0;
 	int alive = 0;
 	int lastvalue = 0;
@@ -165,12 +191,13 @@ void ACCEPTCLIENTSOCK(SERVERSOCK *ssock) {
 	int serversize = sizeof(ssock->server);
 	SOCKET tempsock = accept(ssock->socket, (struct sockaddr *) &ssock->server, &serversize);
 
-	SERVERENDCLIENTSOCK client;
-	client.sock = tempsock;
+	SERVERCLIENT client;
+	client.socket = tempsock;
 
 	time_t currenttime;
 	time(&currenttime);
-	client.lastping = currenttime;
+	client.lastpingrecv = currenttime;
+	client.lastpingsent = currenttime;
 
 
 	if (tempsock != INVALID_SOCKET) {
@@ -186,7 +213,7 @@ int SERVERSENDPACKET(SERVERSOCK *ssock, int clientnum, unsigned int type, char *
 
 	strncpy(buffer + 1, data, DATASIZE);
 
-	int result = send(ssock->clientlist[clientnum].sock, buffer, PACKETSIZE, 0);
+	int result = send(ssock->clientlist[clientnum].socket, buffer, PACKETSIZE, 0);
 	if (result == SOCKET_ERROR) {
 		return 1;
 	}
@@ -197,7 +224,7 @@ int SERVERSENDPACKET(SERVERSOCK *ssock, int clientnum, unsigned int type, char *
 int SERVERRECVPACKET(SERVERSOCK *ssock, int clientnum, unsigned int *type, char *data) {
 	char buffer[PACKETSIZE];
 
-	int result = recv(ssock->clientlist[clientnum].sock, buffer, PACKETSIZE, 0);
+	int result = recv(ssock->clientlist[clientnum].socket, buffer, PACKETSIZE, 0);
 	if (result == 0 || result == SOCKET_ERROR) {
 		return 1;
 	};
@@ -207,12 +234,36 @@ int SERVERRECVPACKET(SERVERSOCK *ssock, int clientnum, unsigned int *type, char 
 		time_t currenttime;
 		time(&currenttime);
 
-		ssock->clientlist[clientnum].lastping = currenttime;
+		ssock->clientlist[clientnum].lastpingrecv = currenttime;
 	};
 
 	strncpy(data, buffer + 1, DATASIZE);
 
 	return 0;
+};
+
+void SERVERHANDLEPING(SERVERSOCK *ssock, int clientnum) {
+	int difference = 0;
+	time_t currenttime;
+
+	time(&currenttime);
+
+	difference = difftime(currenttime, ssock->clientlist[clientnum].lastpingrecv);
+	if (difference == PINGTIMEOUT && ssock->clientlist[clientnum].alive) {
+		printf("%i is dead\n", clientnum);
+
+		ssock->clientlist[clientnum].alive = 0;
+		closesocket(ssock->clientlist[clientnum].socket);
+	};
+
+	difference = difftime(currenttime, ssock->clientlist[clientnum].lastpingsent);
+	if (difference == (PINGTIMEOUT - 2)) { //magic number to give the ping to the client some time to get there
+		char buffer[PACKETSIZE];
+		buffer[0] = 'd';
+
+		send(ssock->clientlist[clientnum].socket, buffer, PACKETSIZE, 0);
+		time(&ssock->clientlist[clientnum].lastpingsent);
+	};
 };
 
 void REMOVESERVERSOCK(SERVERSOCK *ssock) {
