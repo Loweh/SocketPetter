@@ -8,21 +8,46 @@
 #pragma comment(lib, "ws2_32.lib")
 
 /* HEY REMEMBER THESE THINGS
--MAKE THINGS A BIT MORE COHERENT AND NICE LOOKING, FIX STRUCTS AND NAMES
--CONSIDER HIDING THE FOR LOOPS (SERVER-SIDE) IN THE FUNCTIONS THEMSELVES
--AS A RESULT OF THE PREVIOUS POINT, CONSIDER FUSING HANDLEPING WITH RECV
+-WRITE SOME DOCUMENTATION FOR THIS SO I KNOW WHAT I'M DOING IN LATER PROJECTS (LET'S BE HONEST ONLY YOU WILL USE THIS ANYWAY)
+-CLEAN UP SOME GROSS NAMES AND STUFF (AKA ORGANIZE YOUR CODE)
+-ADD A NEW ARRAY IN SERVERSOCK TO STORE SESSIONS FROM CLIENTS (SESSION WILL BE IN SAME SPOT AS ITS ASSOCIATED SERVERSOCK, EX: SESSIONS[0] IS SOCKS[0]'s SESSION)
+-FIGURE OUT IF SESSIONS NEED TO BE ON PINGS
+-OPTIMIZE BOTH CLIENT AND SERVER HANDLING IN MAIN SO THEY DON'T EAT UP 20% OF MY CPU WITH EACH INSTANCE
+-CONSIDER FUSING HANDLEPING WITH RECV
 */
 
 //CONSTANTS
+
 const int PORT = 2127;
 const char *IP = "127.0.0.1";
 const int PACKETSIZE = 13;
-const int DATASIZE = PACKETSIZE - 1;
+const int SESSIONSIZE = 2;
+const int DATASIZE = PACKETSIZE - (SESSIONSIZE + 1);
 const u_long NONBLOCKING = 1; //this should always be above 0
 const int PINGTYPEVALUE = 100;
 const int PINGTIMEOUT = 30;
 
+//HELPFUL FUNCTIONS
+
+void SESSION_ENCODE(int input, char *output) { //convert an int into a SESSIONSIZE-byte long char*
+	for (int i = 0; i < SESSIONSIZE; i++) {
+		int numpart = input;
+		numpart = numpart << (8 * (3 - i));
+		numpart = numpart >> 24;
+		output[i] = (char)numpart;
+	};
+};
+
+void SESSION_DECODE(char *input, int *output) { //convert a SESSIONSIZE-byte long char* into int
+	for (int i = 0; i < SESSIONSIZE; i++) {
+		int part = (int) input[(SESSIONSIZE - (i + 1))];
+		part = part << (8 * (SESSIONSIZE - (i + 1)));
+		*output = *output | part;
+	};
+};
+
 //CLIENT
+
 typedef struct CLIENTSOCK CLIENTSOCK;
 
 struct CLIENTSOCK {
@@ -31,6 +56,7 @@ struct CLIENTSOCK {
 	struct sockaddr_in server;
 	time_t lastpingrecv;
 	time_t lastpingsent;
+	int session = 0;
 	int alive = 0;
 	int lastvalue = 0;
 };
@@ -55,7 +81,17 @@ int CREATECLIENTSOCK(CLIENTSOCK *csock) {
 		return 3;
 	};
 
-	csock->lastvalue = ioctlsocket(csock->socket, FIONBIO, (u_long *) &NONBLOCKING);
+	char buffer[SESSIONSIZE];
+	csock->lastvalue = recv(csock->socket, buffer, SESSIONSIZE, 0);
+	if (csock->lastvalue == 0 || csock->lastvalue == SOCKET_ERROR) {
+		return 6;
+	};
+
+	SESSION_DECODE(buffer, &csock->session);
+
+	printf("Received id: %i\n", csock->session);
+
+	csock->lastvalue = ioctlsocket(csock->socket, FIONBIO, (u_long *)&NONBLOCKING);
 	if (csock->lastvalue == SOCKET_ERROR) {
 		return 5;
 	};
@@ -75,7 +111,11 @@ int CLIENTSENDPACKET(CLIENTSOCK *csock, unsigned int type, char *data) {
 	char buffer[PACKETSIZE];
 	buffer[0] = (char) type;
 
-	strncpy(buffer + 1, data, DATASIZE);
+	char sessionbuffer[SESSIONSIZE];
+	SESSION_ENCODE(csock->session, sessionbuffer);
+	strncpy(buffer + 1, sessionbuffer, SESSIONSIZE);
+
+	strncpy(buffer + (1 +SESSIONSIZE), data, DATASIZE);
 
 	int result = send(csock->socket, buffer, PACKETSIZE, 0);
 	if (result == SOCKET_ERROR) {
@@ -102,7 +142,17 @@ int CLIENTRECVPACKET(CLIENTSOCK *csock, unsigned int *type, char *data) {
 		csock->lastpingrecv = currenttime;
 	};
 
-	strncpy(data, buffer + 1, DATASIZE);
+	char sessionraw[SESSIONSIZE];
+	strncpy(sessionraw, buffer + 1, SESSIONSIZE);
+
+	int session = 0;
+	SESSION_DECODE(sessionraw, &session);
+
+	if (session != csock->session) {
+		return 2;
+	};
+
+	strncpy(data, buffer + (1 + SESSIONSIZE), DATASIZE);
 
 	return 0;
 };
@@ -134,6 +184,7 @@ void REMOVECLIENTSOCK(CLIENTSOCK *csock) {
 };
 
 //SERVER
+
 typedef struct SERVERCLIENT SERVERCLIENT;
 
 struct SERVERCLIENT {
@@ -149,7 +200,7 @@ struct SERVERSOCK {
 	WSADATA wsa;
 	SOCKET socket;
 	struct sockaddr_in server;
-	SERVERCLIENT clientlist[10]; //will probably change this later to a shadow array or something
+	SERVERCLIENT serverclients[10]; //will probably change this later to a shadow array or something
 	int clients = 0;
 	int alive = 0;
 	int lastvalue = 0;
@@ -201,8 +252,15 @@ void ACCEPTCLIENTSOCK(SERVERSOCK *ssock) {
 
 
 	if (tempsock != INVALID_SOCKET) {
-		ssock->clientlist[ssock->clients] = client;
-		
+		ssock->serverclients[ssock->clients] = client;
+
+		char buffer[SESSIONSIZE];
+		SESSION_ENCODE(ssock->clients, buffer);
+
+		send(ssock->serverclients[ssock->clients].socket, buffer, SESSIONSIZE, 0);
+
+		printf("Gave id %i to new client\n", ssock->clients);
+
 		ssock->clients++;
 	};
 };
@@ -211,9 +269,13 @@ int SERVERSENDPACKET(SERVERSOCK *ssock, int clientnum, unsigned int type, char *
 	char buffer[PACKETSIZE];
 	buffer[0] = (char) type;
 
-	strncpy(buffer + 1, data, DATASIZE);
+	char session[SESSIONSIZE];
+	SESSION_ENCODE(clientnum, session);
+	strncpy(buffer + 1, session, SESSIONSIZE);
 
-	int result = send(ssock->clientlist[clientnum].socket, buffer, PACKETSIZE, 0);
+	strncpy(buffer + (1 + SESSIONSIZE), data, DATASIZE);
+
+	int result = send(ssock->serverclients[clientnum].socket, buffer, PACKETSIZE, 0);
 	if (result == SOCKET_ERROR) {
 		return 1;
 	}
@@ -224,7 +286,7 @@ int SERVERSENDPACKET(SERVERSOCK *ssock, int clientnum, unsigned int type, char *
 int SERVERRECVPACKET(SERVERSOCK *ssock, int clientnum, unsigned int *type, char *data) {
 	char buffer[PACKETSIZE];
 
-	int result = recv(ssock->clientlist[clientnum].socket, buffer, PACKETSIZE, 0);
+	int result = recv(ssock->serverclients[clientnum].socket, buffer, PACKETSIZE, 0);
 	if (result == 0 || result == SOCKET_ERROR) {
 		return 1;
 	};
@@ -234,10 +296,20 @@ int SERVERRECVPACKET(SERVERSOCK *ssock, int clientnum, unsigned int *type, char 
 		time_t currenttime;
 		time(&currenttime);
 
-		ssock->clientlist[clientnum].lastpingrecv = currenttime;
+		ssock->serverclients[clientnum].lastpingrecv = currenttime;
 	};
 
-	strncpy(data, buffer + 1, DATASIZE);
+	char sessionraw[SESSIONSIZE];
+	strncpy(sessionraw, buffer + 1, SESSIONSIZE);
+
+	int session = 0;
+	SESSION_DECODE(sessionraw, &session);
+
+	if (session != clientnum) {
+		return 2;
+	};
+
+	strncpy(data, buffer + (1 + SESSIONSIZE), DATASIZE);
 
 	return 0;
 };
@@ -248,21 +320,21 @@ void SERVERHANDLEPING(SERVERSOCK *ssock, int clientnum) {
 
 	time(&currenttime);
 
-	difference = difftime(currenttime, ssock->clientlist[clientnum].lastpingrecv);
-	if (difference == PINGTIMEOUT && ssock->clientlist[clientnum].alive) {
+	difference = difftime(currenttime, ssock->serverclients[clientnum].lastpingrecv);
+	if (difference == PINGTIMEOUT && ssock->serverclients[clientnum].alive) {
 		printf("%i is dead\n", clientnum);
 
-		ssock->clientlist[clientnum].alive = 0;
-		closesocket(ssock->clientlist[clientnum].socket);
+		ssock->serverclients[clientnum].alive = 0;
+		closesocket(ssock->serverclients[clientnum].socket);
 	};
 
-	difference = difftime(currenttime, ssock->clientlist[clientnum].lastpingsent);
+	difference = difftime(currenttime, ssock->serverclients[clientnum].lastpingsent);
 	if (difference == (PINGTIMEOUT - 2)) { //magic number to give the ping to the client some time to get there
 		char buffer[PACKETSIZE];
 		buffer[0] = 'd';
 
-		send(ssock->clientlist[clientnum].socket, buffer, PACKETSIZE, 0);
-		time(&ssock->clientlist[clientnum].lastpingsent);
+		send(ssock->serverclients[clientnum].socket, buffer, PACKETSIZE, 0);
+		time(&ssock->serverclients[clientnum].lastpingsent);
 	};
 };
 

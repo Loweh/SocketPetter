@@ -13,7 +13,7 @@ int main() {
 		return error;
 	};
 
-	CLIENTSENDPACKET(&sock, 100, "snd nudes");
+	CLIENTSENDPACKET(&sock, 33, "snd nudes");
 
 	while (sock.alive) {
 		char b[DATASIZE];
@@ -45,7 +45,6 @@ int main() {
 
 		char buffer[DATASIZE] = "";
 		unsigned int type = 0;
-
 		for (int i = 0; i < sock.clients; i++) {
 			SERVERHANDLEPING(&sock, i);
 
