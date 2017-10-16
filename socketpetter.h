@@ -12,7 +12,6 @@
 -CLEAN UP SOME GROSS NAMES AND STUFF (AKA ORGANIZE YOUR CODE)
 -ADD A NEW ARRAY IN SERVERSOCK TO STORE SESSIONS FROM CLIENTS (SESSION WILL BE IN SAME SPOT AS ITS ASSOCIATED SERVERSOCK, EX: SESSIONS[0] IS SOCKS[0]'s SESSION)
 -FIGURE OUT IF SESSIONS NEED TO BE ON PINGS
--OPTIMIZE BOTH CLIENT AND SERVER HANDLING IN MAIN SO THEY DON'T EAT UP 20% OF MY CPU WITH EACH INSTANCE
 -CONSIDER FUSING HANDLEPING WITH RECV
 */
 
@@ -23,7 +22,7 @@ const char *IP = "127.0.0.1";
 const int PACKETSIZE = 13;
 const int SESSIONSIZE = 2;
 const int DATASIZE = PACKETSIZE - (SESSIONSIZE + 1);
-const u_long NONBLOCKING = 1; //this should always be above 0
+const u_long NONBLOCKING = 1;
 const int PINGTYPEVALUE = 100;
 const int PINGTIMEOUT = 30;
 
@@ -92,9 +91,10 @@ int CREATECLIENTSOCK(CLIENTSOCK *csock) {
 	printf("Received id: %i\n", csock->session);
 
 	csock->lastvalue = ioctlsocket(csock->socket, FIONBIO, (u_long *)&NONBLOCKING);
-	if (csock->lastvalue == SOCKET_ERROR) {
-		return 5;
-	};
+
+	int timeout = 50;
+	setsockopt(csock->socket, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(int));
+	setsockopt(csock->socket, SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout, sizeof(int));
 
 	time_t currenttime;
 	time(&currenttime);
@@ -217,10 +217,11 @@ int CREATESERVERSOCK(SERVERSOCK *ssock) {
 		return 2;
 	};
 
-	ssock->lastvalue = ioctlsocket(ssock->socket, FIONBIO, (u_long *) &NONBLOCKING);
-	if (ssock->lastvalue == SOCKET_ERROR) {
-		return 3;
-	};
+	ssock->lastvalue = ioctlsocket(ssock->socket, FIONBIO, (u_long *)&NONBLOCKING);
+
+	int timeout = 50;
+	setsockopt(ssock->socket, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(int));
+	setsockopt(ssock->socket, SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout, sizeof(int));
 
 	ssock->server.sin_addr.s_addr = INADDR_ANY;
 	ssock->server.sin_port = htons(PORT);
@@ -263,6 +264,8 @@ void ACCEPTCLIENTSOCK(SERVERSOCK *ssock) {
 
 		ssock->clients++;
 	};
+
+	Sleep(50);
 };
 
 int SERVERSENDPACKET(SERVERSOCK *ssock, int clientnum, unsigned int type, char *data) {

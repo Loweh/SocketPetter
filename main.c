@@ -4,7 +4,7 @@
 
 int main() {
 	//CLIENT TEST CODE
-	CLIENTSOCK sock;
+	/*CLIENTSOCK sock;
 	int error = 0;
 
 	error = CREATECLIENTSOCK(&sock);
@@ -27,10 +27,10 @@ int main() {
 		};
 	};
 
-	REMOVECLIENTSOCK(&sock);
+	REMOVECLIENTSOCK(&sock);*/
 
 	// SERVER TEST CODE
-	/*SERVERSOCK sock;
+	SERVERSOCK sock;
 	int error = 0;
 	int a = 0;
 
@@ -55,7 +55,7 @@ int main() {
 		};
 	};
 
-	REMOVESERVERSOCK(&sock);*/
+	REMOVESERVERSOCK(&sock);
 
 	return 0;
 };
