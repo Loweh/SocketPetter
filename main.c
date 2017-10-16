@@ -13,7 +13,7 @@ int main() {
 		return error;
 	};
 
-	CLIENTSENDPACKET(&sock, 33, "snd nudes");
+	CLIENTSENDPACKET(&sock, 33, "test");
 
 	while (sock.alive) {
 		char b[DATASIZE];
@@ -50,7 +50,7 @@ int main() {
 
 			error = SERVERRECVPACKET(&sock, i, &type, buffer);
 			if (!error) {
-				printf("%i says... %s with type %i\n", i, buffer, type);
+				printf("%i says... %s with type %i\n", sock.sessions[i], buffer, type);
 			};
 		};
 	};
