@@ -12,8 +12,6 @@
 -MAKE PRINTS LOOK BETTER, MORE DESCRIPTIVE
 -ADD THAT SHADOW ARRAY ALREADY
 -MAKE VARIABLE, CONSTANT AND FUNCTION NAMES LESS UGLY
--FIGURE OUT IF SESSIONS NEED TO BE ON PINGS
--FIGURE OUT HOW LONG PINGTIMEOUT SHOULD BE
 */
 
 //CONSTANTS
@@ -26,7 +24,7 @@
 #define NONBLOCKING 1
 #define OPERATIONTIMEOUT 50
 #define PINGTYPEVALUE 100
-#define PINGTIMEOUT 30
+#define PINGTIMEOUT 20
 
 //MAIN STRUCTS
 
@@ -49,6 +47,7 @@ struct SERVERCLIENT {
 	SOCKET socket;
 	time_t lastpingrecv;
 	time_t lastpingsent;
+	int session;
 	int alive;
 };
 
@@ -59,7 +58,6 @@ struct SERVERSOCK {
 	SOCKET socket;
 	struct sockaddr_in server;
 	SERVERCLIENT serverclients[10]; //will probably change this later to a shadow array or something
-	int sessions[10]; //this too
 	int clients;
 	int alive;
 	int lastvalue;
@@ -74,7 +72,7 @@ int NEW_SESSION(SERVERSOCK *ssock) {
 	while (keepgoing) {
 		int original = 1;
 		for (int i = 0; i < ssock->clients; i++) {
-			if (result == ssock->sessions[i]) {
+			if (result == ssock->serverclients[i].session) {
 				original = 0;
 			};
 		};
@@ -228,6 +226,11 @@ void CLIENTHANDLEPING(CLIENTSOCK *csock) {
 		char buffer[PACKETSIZE];
 		buffer[0] = (char) PINGTYPEVALUE;
 
+		char session[SESSIONSIZE];
+		SESSION_ENCODE(csock->session, session);
+
+		strncpy(buffer + 1, session, SESSIONSIZE);
+
 		send(csock->socket, buffer, PACKETSIZE, 0);
 		time(&csock->lastpingsent);
 	};
@@ -301,7 +304,7 @@ void ACCEPTCLIENTSOCK(SERVERSOCK *ssock) {
 		ssock->serverclients[ssock->clients] = client;
 
 		int session = NEW_SESSION(ssock);
-		ssock->sessions[ssock->clients] = session;
+		ssock->serverclients[ssock->clients].session = session;
 
 		char buffer[SESSIONSIZE];
 		SESSION_ENCODE(session, buffer);
@@ -321,7 +324,7 @@ int SERVERSENDPACKET(SERVERSOCK *ssock, int clientnum, unsigned int type, char *
 	buffer[0] = (char) type;
 
 	char session[SESSIONSIZE];
-	SESSION_ENCODE(ssock->sessions[clientnum], session);
+	SESSION_ENCODE(ssock->serverclients[clientnum].session, session);
 	strncpy(buffer + 1, session, SESSIONSIZE);
 
 	strncpy(buffer + (1 + SESSIONSIZE), data, DATASIZE);
@@ -356,7 +359,7 @@ int SERVERRECVPACKET(SERVERSOCK *ssock, int clientnum, unsigned int *type, char 
 	int session = 0;
 	SESSION_DECODE(sessionraw, &session);
 
-	if (session != ssock->sessions[clientnum]) {
+	if (session != ssock->serverclients[clientnum].session) {
 		return 2;
 	};
 
@@ -373,7 +376,7 @@ void SERVERHANDLEPING(SERVERSOCK *ssock, int clientnum) {
 
 	difference = difftime(currenttime, ssock->serverclients[clientnum].lastpingrecv);
 	if (difference == PINGTIMEOUT && ssock->serverclients[clientnum].alive) {
-		printf("%i is dead\n", ssock->sessions[clientnum]);
+		printf("%i is dead\n", ssock->serverclients[clientnum].session);
 
 		ssock->serverclients[clientnum].alive = 0;
 		closesocket(ssock->serverclients[clientnum].socket);
@@ -383,6 +386,11 @@ void SERVERHANDLEPING(SERVERSOCK *ssock, int clientnum) {
 	if (difference == (PINGTIMEOUT - 2)) { //magic number to give the ping to the client some time to get there
 		char buffer[PACKETSIZE];
 		buffer[0] = 'd';
+		
+		char session[SESSIONSIZE];
+		SESSION_ENCODE(ssock->serverclients[clientnum].session, session);
+		
+		strncpy(buffer + 1, session, SESSIONSIZE);
 
 		send(ssock->serverclients[clientnum].socket, buffer, PACKETSIZE, 0);
 		time(&ssock->serverclients[clientnum].lastpingsent);
