@@ -4,7 +4,7 @@
 
 int main() {
 	// SERVER TEST CODE
-	/*SERVERSOCK sock;
+	SERVERSOCK sock;
 	int error = 0;
 	int a = 0;
 
@@ -24,16 +24,18 @@ int main() {
 
 			error = SERVERRECVPACKET(&sock, i, &type, buffer);
 			if (!error) {
+				SERVERCLIENT *client = GETSHADOWARRAYELEMENT(&sock.serverclients, i);
+
 				if (type != PINGTYPEVALUE) {
-					printf("%i says... %s with type %i\n", sock.serverclients[i].session, buffer, type);
+					printf("%i says... %s with type %i\n", client->session, buffer, type);
 				} else {
-					printf("%i pinged the server\n", sock.serverclients[i].session);
+					printf("%i pinged the server\n", client->session);
 				};
 			};
 		};
 	};
 
-	REMOVESERVERSOCK(&sock);*/
+	REMOVESERVERSOCK(&sock);
 
 	return 0;
 };

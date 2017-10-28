@@ -10,7 +10,7 @@
 /* HEY REMEMBER THESE THINGS
 -DOCUMENT HOW ALL THIS STUFF WORKS SO YOU KNOW FOR THE FUTURE
 -MAKE PRINTS LOOK BETTER, MORE DESCRIPTIVE
--ADD THAT SHADOW ARRAY ALREADY
+-TEST THE SHADOW ARRAY TO MAKE SURE IT CAN WORK UP TO AT LEAST 30 CLIENTS
 -MAKE VARIABLE, CONSTANT AND FUNCTION NAMES LESS UGLY
 */
 
@@ -25,6 +25,10 @@
 #define OPERATIONTIMEOUT 50
 #define PINGTYPEVALUE 100
 #define PINGTIMEOUT 20
+#define INITELEMENTS 10
+#define STARTINGOFFSET 5
+#define TOP 0
+#define BOTTOM 1
 
 //MAIN STRUCTS
 
@@ -51,16 +55,128 @@ struct SERVERCLIENT {
 	int alive;
 };
 
+typedef struct CLIENTSHADOWARRAY CLIENTSHADOWARRAY; //kinda put here for necessity, it's gross and i don't like it
+
+struct CLIENTSHADOWARRAY {
+	SERVERCLIENT *top;
+	SERVERCLIENT *bottom;
+	int nextsize;
+	int maxelements;
+	int topelements;
+	int botelements;
+	int level;
+	int increments;
+};
+
 typedef struct SERVERSOCK SERVERSOCK;
 
 struct SERVERSOCK {
 	WSADATA wsa;
 	SOCKET socket;
 	struct sockaddr_in server;
-	SERVERCLIENT serverclients[10]; //will probably change this later to a shadow array or something
+	CLIENTSHADOWARRAY serverclients;
 	int clients;
 	int alive;
 	int lastvalue;
+};
+
+//SHADOW ARRAY FUNCTIONS
+
+void CREATECLIENTSHADOWARRAY(CLIENTSHADOWARRAY *sarray) {
+	sarray->maxelements = INITELEMENTS;
+	sarray->topelements = 0;
+	sarray->botelements = 0;
+	sarray->increments = 0;
+	sarray->level = TOP;
+
+	sarray->top = (int *)malloc(INITELEMENTS * sizeof(SERVERCLIENT));
+	sarray->bottom = (int *)malloc((INITELEMENTS * 2) * sizeof(SERVERCLIENT));
+	sarray->nextsize = INITELEMENTS * 3;
+};
+
+void ADDCLIENTSHADOWARRAYELEMENT(CLIENTSHADOWARRAY *sarray, SERVERCLIENT client) {
+	if (sarray->level == TOP) {
+		if (sarray->topelements < sarray->maxelements) {
+			sarray->top[sarray->topelements] = client;
+			sarray->topelements++;
+
+			for (int i = 0; i < (sarray->maxelements / 10); i++) {
+				sarray->bottom[sarray->botelements] = sarray->top[sarray->botelements];
+				sarray->botelements++;
+			};
+		} else { //ignoring a case where spaceused is greater than maxelements because laze
+			sarray->bottom[sarray->botelements] = client;
+			sarray->botelements++;
+
+			sarray->maxelements = sarray->nextsize - 10;
+
+			free(sarray->top);
+			sarray->top = (int *)malloc(sizeof(SERVERCLIENT) * sarray->nextsize);
+			sarray->topelements = 0;
+
+			sarray->increments++;
+
+			sarray->nextsize = sarray->nextsize + INITELEMENTS;
+
+			int onlevel = sarray->level;
+			sarray->level = BOTTOM;
+
+			//give some exta elements
+			for (int i = 0; i < (sarray->maxelements / 10); i++) {
+				sarray->top[sarray->topelements] = sarray->bottom[sarray->topelements];
+				sarray->topelements++;
+			};
+		};
+	} else {
+		if (sarray->botelements < sarray->maxelements) {
+			sarray->bottom[sarray->botelements] = client;
+			sarray->botelements++;
+
+			for (int i = 0; i < (sarray->maxelements / 10); i++) {
+				sarray->top[sarray->topelements] = sarray->bottom[sarray->topelements];
+				sarray->topelements++;
+			};
+		} else { //ignoring a case where spaceused is greater than maxelements because laze
+			sarray->top[sarray->topelements] = client;
+			sarray->topelements++;
+
+			sarray->maxelements = sarray->nextsize - 10;
+
+			free(sarray->bottom);
+			sarray->bottom = (int *)malloc(sizeof(SERVERCLIENT) * sarray->nextsize);
+			sarray->botelements = 0;
+
+			sarray->increments++;
+
+			sarray->nextsize = sarray->nextsize + INITELEMENTS;
+
+			int onlevel = sarray->level;
+			sarray->level = TOP;
+
+			//give some exta elements
+			for (int i = 0; i < (sarray->maxelements / 10); i++) {
+				sarray->bottom[sarray->botelements] = sarray->top[sarray->botelements];
+				sarray->botelements++;
+			};
+		};
+	};
+};
+
+SERVERCLIENT* GETSHADOWARRAYELEMENT(CLIENTSHADOWARRAY *sarray, int position) {
+	if (sarray->level == TOP) {
+		if (position < sarray->topelements) {
+			return &sarray->top[position];
+		};
+	} else {
+		if (position < sarray->botelements) {
+			return &sarray->bottom[position];
+		};
+	};
+};
+
+void REMOVECLIENTSHADOWARRAY(CLIENTSHADOWARRAY *sarray) {
+	free(sarray->top);
+	free(sarray->bottom);
 };
 
 //SESSION RELATED CODE
@@ -72,7 +188,10 @@ int NEW_SESSION(SERVERSOCK *ssock) {
 	while (keepgoing) {
 		int original = 1;
 		for (int i = 0; i < ssock->clients; i++) {
-			if (result == ssock->serverclients[i].session) {
+			SERVERCLIENT client;
+			GETSHADOWARRAYELEMENT(&ssock->serverclients, i, &client);
+
+			if (result == client.session) {
 				original = 0;
 			};
 		};
@@ -278,6 +397,8 @@ int CREATESERVERSOCK(SERVERSOCK *ssock) {
 		return 4;
 	};
 
+	CREATECLIENTSHADOWARRAY(&ssock->serverclients);
+
 	ssock->alive = 1;
 
 	return 0;
@@ -301,15 +422,17 @@ void ACCEPTCLIENTSOCK(SERVERSOCK *ssock) {
 	if (tempsock != INVALID_SOCKET) {
 		client.alive = 1;
 
-		ssock->serverclients[ssock->clients] = client;
+		ADDCLIENTSHADOWARRAYELEMENT(&ssock->serverclients, client);
+
+		SERVERCLIENT *acceptedclient = GETSHADOWARRAYELEMENT(&ssock->serverclients, ssock->clients);
 
 		int session = NEW_SESSION(ssock);
-		ssock->serverclients[ssock->clients].session = session;
+		acceptedclient->session = session;
 
 		char buffer[SESSIONSIZE];
 		SESSION_ENCODE(session, buffer);
 
-		send(ssock->serverclients[ssock->clients].socket, buffer, SESSIONSIZE, 0);
+		send(acceptedclient->socket, buffer, SESSIONSIZE, 0);
 
 		printf("Gave session %i to new client\n", session);
 
@@ -320,16 +443,18 @@ void ACCEPTCLIENTSOCK(SERVERSOCK *ssock) {
 };
 
 int SERVERSENDPACKET(SERVERSOCK *ssock, int clientnum, unsigned int type, char *data) {
+	SERVERCLIENT *client = GETSHADOWARRAYELEMENT(&ssock->serverclients, clientnum);
+
 	char buffer[PACKETSIZE];
 	buffer[0] = (char) type;
 
 	char session[SESSIONSIZE];
-	SESSION_ENCODE(ssock->serverclients[clientnum].session, session);
+	SESSION_ENCODE(client->session, session);
 	strncpy(buffer + 1, session, SESSIONSIZE);
 
 	strncpy(buffer + (1 + SESSIONSIZE), data, DATASIZE);
 
-	int result = send(ssock->serverclients[clientnum].socket, buffer, PACKETSIZE, 0);
+	int result = send(client->socket, buffer, PACKETSIZE, 0);
 	if (result == SOCKET_ERROR) {
 		return 1;
 	}
@@ -338,9 +463,11 @@ int SERVERSENDPACKET(SERVERSOCK *ssock, int clientnum, unsigned int type, char *
 };
 
 int SERVERRECVPACKET(SERVERSOCK *ssock, int clientnum, unsigned int *type, char *data) {
+	SERVERCLIENT *client = GETSHADOWARRAYELEMENT(&ssock->serverclients, clientnum);
+
 	char buffer[PACKETSIZE];
 
-	int result = recv(ssock->serverclients[clientnum].socket, buffer, PACKETSIZE, 0);
+	int result = recv(client->socket, buffer, PACKETSIZE, 0);
 	if (result == 0 || result == SOCKET_ERROR) {
 		return 1;
 	};
@@ -350,7 +477,7 @@ int SERVERRECVPACKET(SERVERSOCK *ssock, int clientnum, unsigned int *type, char 
 		time_t currenttime;
 		time(&currenttime);
 
-		ssock->serverclients[clientnum].lastpingrecv = currenttime;
+		client->lastpingrecv = currenttime;
 	};
 
 	char sessionraw[SESSIONSIZE];
@@ -359,7 +486,7 @@ int SERVERRECVPACKET(SERVERSOCK *ssock, int clientnum, unsigned int *type, char 
 	int session = 0;
 	SESSION_DECODE(sessionraw, &session);
 
-	if (session != ssock->serverclients[clientnum].session) {
+	if (session != client->session) {
 		return 2;
 	};
 
@@ -369,31 +496,33 @@ int SERVERRECVPACKET(SERVERSOCK *ssock, int clientnum, unsigned int *type, char 
 };
 
 void SERVERHANDLEPING(SERVERSOCK *ssock, int clientnum) {
+	SERVERCLIENT *client = GETSHADOWARRAYELEMENT(&ssock->serverclients, clientnum);
+
 	int difference = 0;
 	time_t currenttime;
 
 	time(&currenttime);
 
-	difference = difftime(currenttime, ssock->serverclients[clientnum].lastpingrecv);
-	if (difference == PINGTIMEOUT && ssock->serverclients[clientnum].alive) {
-		printf("%i is dead\n", ssock->serverclients[clientnum].session);
+	difference = difftime(currenttime, client->lastpingrecv);
+	if (difference == PINGTIMEOUT && client->alive) {
+		printf("%i is dead\n", client->session);
 
-		ssock->serverclients[clientnum].alive = 0;
-		closesocket(ssock->serverclients[clientnum].socket);
+		client->alive = 0;
+		closesocket(client->socket);
 	};
 
-	difference = difftime(currenttime, ssock->serverclients[clientnum].lastpingsent);
+	difference = difftime(currenttime, client->lastpingsent);
 	if (difference == (PINGTIMEOUT - 2)) { //magic number to give the ping to the client some time to get there
 		char buffer[PACKETSIZE];
 		buffer[0] = 'd';
 		
 		char session[SESSIONSIZE];
-		SESSION_ENCODE(ssock->serverclients[clientnum].session, session);
+		SESSION_ENCODE(client->session, session);
 		
 		strncpy(buffer + 1, session, SESSIONSIZE);
 
-		send(ssock->serverclients[clientnum].socket, buffer, PACKETSIZE, 0);
-		time(&ssock->serverclients[clientnum].lastpingsent);
+		send(client->socket, buffer, PACKETSIZE, 0);
+		time(&client->lastpingsent);
 	};
 };
 
